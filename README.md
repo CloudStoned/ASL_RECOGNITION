@@ -6,7 +6,6 @@ This project is an Android application integrated with PyTorch Mobile for on-dev
 ## Features
 - **PyTorch Mobile Integration**: Supports lightweight machine learning models on Android.
 - **CameraX**: Real-time image capturing and processing.
-- **Navigation**: User-friendly interface with easy navigation.
 - **Material Design**: Sleek UI with Material Design components.
 
 ## Prerequisites
