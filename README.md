@@ -1,4 +1,4 @@
-# TorchAndroid Project
+# Asl Recognition
 
 ## Overview
 This project is an Android application integrated with PyTorch Mobile for on-device machine learning. The app leverages CameraX for real-time image processing.
