@@ -64,7 +64,7 @@ public class MainActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
-        previewView = findViewById(R.id.cameraView);    
+        previewView = findViewById(R.id.cameraView);
         textView = findViewById(R.id.result_text);
         combinedLettersTextView = findViewById(R.id.combined_letters);
         combineLettersButton = findViewById(R.id.combine_letters);

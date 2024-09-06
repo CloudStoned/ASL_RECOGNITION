@@ -2,3 +2,5 @@
 dataset/
 venv/
 __pycache__/
+.cache/
+IDEA-Research/
