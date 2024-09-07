@@ -119,7 +119,7 @@ public class MainActivity extends AppCompatActivity {
 
     private void initializeApp() {
         CLASSES = loadClasses("classes.txt");
-        loadTorchModule("2_CLASSES_MODEL.ptl");
+        loadTorchModule("hand_landmark_model.ptl");
         cameraProviderFuture = ProcessCameraProvider.getInstance(this);
         cameraProviderFuture.addListener(() -> {
             try {
