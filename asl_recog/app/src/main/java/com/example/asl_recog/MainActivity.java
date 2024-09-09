@@ -3,13 +3,18 @@ package com.example.asl_recog;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Canvas;
+import android.graphics.Color;
 import android.graphics.ImageFormat;
+import android.graphics.Paint;
 import android.graphics.Rect;
+import android.graphics.RectF;
 import android.graphics.YuvImage;
 import android.media.Image;
 import android.os.Bundle;
 import android.util.Log;
 import android.util.Size;
+import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -51,6 +56,8 @@ public class MainActivity extends AppCompatActivity {
     private TextView textView;
     private Hands hands;
 
+    private Paint boxPaint;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -58,6 +65,12 @@ public class MainActivity extends AppCompatActivity {
 
         previewView = findViewById(R.id.cameraView);
         textView = findViewById(R.id.result_text); // Make sure you have this in your layout
+
+        // Initialize paint for drawing bounding box
+        boxPaint = new Paint();
+        boxPaint.setColor(Color.RED);
+        boxPaint.setStyle(Paint.Style.STROKE);
+        boxPaint.setStrokeWidth(5f);
 
         if (checkPermissions()) {
             initializeHandsAndCamera();
@@ -147,14 +160,55 @@ public class MainActivity extends AppCompatActivity {
                 textView.setText("No hands detected");
             } else {
                 textView.setText("Hand detected");
+                String handPosition = getHandPosition(result);
+
+                runOnUiThread(() -> {
+                    textView.setText(handPosition);
+
+                    // Clear any previous drawings
+                    Bitmap outputBitmap = Bitmap.createBitmap(previewView.getWidth(), previewView.getHeight(), Bitmap.Config.ARGB_8888);
+                    Canvas canvas = new Canvas(outputBitmap);
+
+                    if (!result.multiHandLandmarks().isEmpty()) {
+                        // Draw bounding box
+                        RectF boundingBox = getBoundingBox(result.multiHandLandmarks().get(0).getLandmarkList());
+                        canvas.drawRect(boundingBox, boxPaint);
+                    }
+
+                    // Set the bitmap to an ImageView or draw it on a custom view
+                    // For simplicity, let's assume you have an ImageView with id 'overlayView' in your layout
+                    ImageView overlayView = findViewById(R.id.overlayView);
+                    overlayView.setImageBitmap(outputBitmap);
+                });
             }
         });
     }
 
+    private RectF getBoundingBox(List<LandmarkProto.NormalizedLandmark> landmarks) {
+        float minX = Float.MAX_VALUE;
+        float minY = Float.MAX_VALUE;
+        float maxX = Float.MIN_VALUE;
+        float maxY = Float.MIN_VALUE;
 
-    private String getHandPosition(HandsResult result)
-    {
-        // Get the first detected hand's landmarks
+        for (LandmarkProto.NormalizedLandmark landmark : landmarks) {
+            minX = Math.min(minX, landmark.getX());
+            minY = Math.min(minY, landmark.getY());
+            maxX = Math.max(maxX, landmark.getX());
+            maxY = Math.max(maxY, landmark.getY());
+        }
+
+        // Convert normalized coordinates to pixel coordinates
+        int width = previewView.getWidth();
+        int height = previewView.getHeight();
+        return new RectF(minX * width, minY * height, maxX * width, maxY * height);
+    }
+
+
+    private String getHandPosition(HandsResult result) {
+        if (result.multiHandLandmarks().isEmpty()) {
+            return "No hand detected";
+        }
+
         List<LandmarkProto.NormalizedLandmark> landmarks = result.multiHandLandmarks().get(0).getLandmarkList();
 
         // Calculate the center of the palm
@@ -164,34 +218,10 @@ public class MainActivity extends AppCompatActivity {
                 landmarks.get(HandLandmark.MIDDLE_FINGER_MCP).getY()) / 2;
 
         // Determine the position based on the center of the palm
-        String horizontalPosition = centerX < 0.33 ? "Left" : (centerX > 0.66 ? "Right" : "Center");
-        String verticalPosition = centerY < 0.33 ? "Top" : (centerY > 0.66 ? "Bottom" : "Middle");
+        String horizontalPosition = centerX < 0.33f ? "Left" : (centerX > 0.66f ? "Right" : "Center");
+        String verticalPosition = centerY < 0.33f ? "Top" : (centerY > 0.66f ? "Bottom" : "Middle");
 
         return verticalPosition + " " + horizontalPosition;
-    }
-
-    // Convert Image object to Bitmap
-    private Bitmap imageToBitmap(Image image) {
-        Image.Plane[] planes = image.getPlanes();
-        ByteBuffer yBuffer = planes[0].getBuffer();
-        ByteBuffer uBuffer = planes[1].getBuffer();
-        ByteBuffer vBuffer = planes[2].getBuffer();
-
-        int ySize = yBuffer.remaining();
-        int uSize = uBuffer.remaining();
-        int vSize = vBuffer.remaining();
-
-        byte[] nv21 = new byte[ySize + uSize + vSize];
-        yBuffer.get(nv21, 0, ySize);
-        vBuffer.get(nv21, ySize, vSize);
-        uBuffer.get(nv21, ySize + vSize, uSize);
-
-        YuvImage yuvImage = new YuvImage(nv21, ImageFormat.NV21, image.getWidth(), image.getHeight(), null);
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        yuvImage.compressToJpeg(new Rect(0, 0, yuvImage.getWidth(), yuvImage.getHeight()), 75, out);
-
-        byte[] imageBytes = out.toByteArray();
-        return Bitmap.createBitmap(image.getWidth(), image.getHeight(), Bitmap.Config.ARGB_8888);
     }
 
 
