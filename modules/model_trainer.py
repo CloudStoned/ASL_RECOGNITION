@@ -161,15 +161,50 @@ class TensorHandLandmarkTrainer:
         return loss.item(), acc
 
     def train(self, model, X_train, y_train, X_test, y_test, optimizer, loss_fn, epochs, scheduler=None, patience=None, batch_size=32):
+        print(f"PyTorch version: {torch.__version__}")
+        print(f"CUDA available: {torch.cuda.is_available()}")
+        print(f"CUDA version: {torch.version.cuda}")
+        if torch.cuda.is_available():
+            print(f"GPU: {torch.cuda.get_device_name(0)}")
+            print(f"Number of GPUs: {torch.cuda.device_count()}")
+        
         print(f"Training on device: {self.device}")
-        print(f"Model is on device: {next(model.parameters()).device}")
+        print(f"Model is initially on device: {next(model.parameters()).device}")
         
-        if next(model.parameters()).device != self.device:
-            print(f"Moving model to {self.device}")
-            model.to(self.device)
-        
-        print(f"After moving, model is on device: {next(model.parameters()).device}")
-        
+        try:
+            if next(model.parameters()).device != self.device:
+                print(f"Attempting to move model to {self.device}")
+                model = model.to(self.device)
+            
+            print(f"After moving, model is on device: {next(model.parameters()).device}")
+            
+            # Try a forward pass with a small batch
+            small_batch = X_train[:1].to(self.device)
+            with torch.no_grad():
+                output = model(small_batch)
+            print("Forward pass successful with small batch")
+            
+            # Print model structure
+            print("Model structure:")
+            print(model)
+            
+            # Print optimizer details
+            print("Optimizer details:")
+            print(optimizer)
+            
+            # Print loss function details
+            print("Loss function:")
+            print(loss_fn)
+            
+        except RuntimeError as e:
+            print(f"RuntimeError occurred: {e}")
+            print("CUDA error details:")
+            if torch.cuda.is_available():
+                print(torch.cuda.get_device_properties(self.device))
+                print(f"CUDA memory allocated: {torch.cuda.memory_allocated(self.device) / 1e6:.2f} MB")
+                print(f"CUDA memory reserved: {torch.cuda.memory_reserved(self.device) / 1e6:.2f} MB")
+            raise  # Re-raise the exception after printing diagnostic info
+
         patience = patience if patience is not None else self.EARLY_STOPPING_PATIENCE
         results = {"train_loss": [], "train_acc": [], "test_loss": [], "test_acc": []}
         best_loss = float('inf')
@@ -181,8 +216,8 @@ class TensorHandLandmarkTrainer:
         for epoch in tqdm(range(epochs)):
             train_loss, train_acc = 0, 0
             for i in range(0, len(X_train), batch_size):
-                batch_X = X_train[i:i+batch_size]
-                batch_y = y_train[i:i+batch_size]
+                batch_X = X_train[i:i+batch_size].to(self.device)
+                batch_y = y_train[i:i+batch_size].to(self.device)
                 batch_loss, batch_acc = self.train_step(model, batch_X, batch_y, loss_fn, optimizer)
                 train_loss += batch_loss
                 train_acc += batch_acc

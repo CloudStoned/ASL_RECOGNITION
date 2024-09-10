@@ -40,13 +40,13 @@ configurations.all {
 
 dependencies {
 
+    implementation 'org.pytorch:pytorch_android_lite:1.13.1'
+    implementation 'org.pytorch:pytorch_android_torchvision_lite:1.13.1'
+
     implementation 'com.google.mediapipe:solution-core:latest.release'
     implementation 'com.google.mediapipe:hands:latest.release'
 
-    implementation 'com.microsoft.onnxruntime:onnxruntime-android:1.15.1'
-
-//    implementation 'org.pytorch:pytorch_android_lite:1.13.1'
-//    implementation 'org.pytorch:pytorch_android_torchvision_lite:1.13.1'
+//    implementation 'com.microsoft.onnxruntime:onnxruntime-android:1.15.1'
 
     implementation 'androidx.core:core-ktx:1.10.1'
     implementation 'androidx.appcompat:appcompat:1.6.1'
