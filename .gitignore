@@ -7,3 +7,6 @@ IDEA-Research/
 Landmarks_DS/
 test_images/
 landmark_ds/
+*.jpg
+RFC_MODEL/
+rfc_venv/

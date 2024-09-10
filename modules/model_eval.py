@@ -105,3 +105,49 @@ class ModelEvaluator:
             "classification_report": report
         }
 
+
+
+class HandLandMarksEvaluator:
+    def __init__(self, model: torch.nn.Module, device=None):
+        self.model = model
+        self.device = device if device else torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.model = self.model.to(self.device)
+
+    def evaluate_model(self, X, y):
+        self.model.eval()
+        
+        with torch.no_grad():
+            if isinstance(X, DataLoader):
+                all_preds = []
+                all_targets = []
+                for batch_X, batch_y in X:
+                    batch_X = batch_X.to(self.device)
+                    y_logit = self.model(batch_X)
+                    y_pred = torch.softmax(y_logit, dim=1).argmax(dim=1)
+                    
+                    all_preds.extend(y_pred.cpu().numpy())
+                    all_targets.extend(batch_y.cpu().numpy())
+                return np.array(all_preds), np.array(all_targets)
+            else:
+                X = X.to(self.device)
+                y_logit = self.model(X)
+                y_pred = torch.softmax(y_logit, dim=1).argmax(dim=1)
+                
+                return y_pred.cpu().numpy(), y.cpu().numpy()
+
+    def compute_accuracy(self, y_true, y_pred):
+        return accuracy_score(y_true, y_pred)
+
+    def generate_classification_report(self, y_true, y_pred, target_names=None):
+        return classification_report(y_true, y_pred, target_names=target_names)
+
+    def evaluate_and_report(self, X, y, class_names=None):
+        y_pred, y_true = self.evaluate_model(X, y)
+        
+        accuracy = self.compute_accuracy(y_true, y_pred)
+        report = self.generate_classification_report(y_true, y_pred, target_names=class_names)
+        
+        return {
+            "accuracy": accuracy,
+            "classification_report": report
+        }
