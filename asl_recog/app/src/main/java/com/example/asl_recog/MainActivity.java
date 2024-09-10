@@ -1,29 +1,20 @@
 package com.example.asl_recog;
 
 import android.content.pm.PackageManager;
+import android.content.res.Resources;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
-import android.graphics.Canvas;
-import android.graphics.Color;
 import android.graphics.ImageFormat;
-import android.graphics.Paint;
 import android.graphics.Rect;
-import android.graphics.RectF;
 import android.graphics.YuvImage;
-import android.media.Image;
 import android.os.Bundle;
 import android.util.Log;
-import android.util.Size;
-import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.annotation.NonNull;
-import androidx.annotation.OptIn;
 import androidx.appcompat.app.AppCompatActivity;
-import androidx.camera.core.Camera;
 import androidx.camera.core.CameraSelector;
-import androidx.camera.core.ExperimentalGetImage;
 import androidx.camera.core.ImageAnalysis;
 import androidx.camera.core.ImageProxy;
 import androidx.camera.core.Preview;
@@ -34,20 +25,31 @@ import androidx.core.content.ContextCompat;
 
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.mediapipe.formats.proto.LandmarkProto;
-import com.google.mediapipe.solutions.hands.HandLandmark;
 import com.google.mediapipe.solutions.hands.Hands;
 import com.google.mediapipe.solutions.hands.HandsOptions;
 import com.google.mediapipe.solutions.hands.HandsResult;
 
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
+
+import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Executor;
-import java.util.concurrent.Executors;
 
 public class MainActivity extends AppCompatActivity {
-    private static final String TAG = "MediaPipeHandDetection";
+    private static final String TAG = "ASL_Recognition";
     private static final int REQUEST_CODE_PERMISSION = 101;
     private static final String[] REQUIRED_PERMISSION = new String[]{"android.permission.CAMERA"};
 
@@ -55,28 +57,35 @@ public class MainActivity extends AppCompatActivity {
     private PreviewView previewView;
     private TextView textView;
     private Hands hands;
-
-    private Paint boxPaint;
+    private RandomForestClassifier classifier;
+    private List<String> aslClasses;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
-        previewView = findViewById(R.id.cameraView);
-        textView = findViewById(R.id.result_text); // Make sure you have this in your layout
+        Log.d(TAG, "onCreate called");
 
-        // Initialize paint for drawing bounding box
-        boxPaint = new Paint();
-        boxPaint.setColor(Color.RED);
-        boxPaint.setStyle(Paint.Style.STROKE);
-        boxPaint.setStrokeWidth(5f);
+        previewView = findViewById(R.id.cameraView);
+        textView = findViewById(R.id.result_text);
+
+        initializeAslClasses();
 
         if (checkPermissions()) {
             initializeHandsAndCamera();
+            initializeRandomForestClassifier();
         } else {
             ActivityCompat.requestPermissions(this, REQUIRED_PERMISSION, REQUEST_CODE_PERMISSION);
         }
+    }
+
+    private void initializeAslClasses() {
+        aslClasses = new ArrayList<>();
+        aslClasses.add("0");
+        aslClasses.add("1");
+        aslClasses.add("2");
+        // Add more classes if needed
     }
 
     private boolean checkPermissions() {
@@ -93,6 +102,7 @@ public class MainActivity extends AppCompatActivity {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (requestCode == REQUEST_CODE_PERMISSION) {
             if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                initializeRandomForestClassifier();
                 initializeHandsAndCamera();
             } else {
                 Toast.makeText(this, "Camera permission is required", Toast.LENGTH_SHORT).show();
@@ -101,8 +111,106 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    private void initializeRandomForestClassifier() {
+        Log.d(TAG, "Starting initializeRandomForestClassifier");
+        try {
+            // Read the JSON file from the raw folder
+            InputStream is = getResources().openRawResource(R.raw.forest_structure);
+            BufferedReader reader = new BufferedReader(new InputStreamReader(is));
+            StringBuilder sb = new StringBuilder();
+            String line;
+            while ((line = reader.readLine()) != null) {
+                sb.append(line);
+            }
+            reader.close();
+            is.close();
+            String jsonString = sb.toString();
+            Log.d(TAG, "JSON string read. Length: " + jsonString.length());
+
+            JSONArray forestArray = new JSONArray(jsonString);
+            Log.d(TAG, "Forest JSON parsed. Number of trees: " + forestArray.length());
+
+            List<RandomForestClassifier.DecisionTree> trees = new ArrayList<>();
+
+            for (int i = 0; i < forestArray.length(); i++) {
+                Log.d(TAG, "Processing tree " + (i + 1));
+                JSONArray treeArray = forestArray.getJSONArray(i);
+                RandomForestClassifier.Node root = buildTreeFromJson(treeArray);
+                trees.add(new RandomForestClassifier.DecisionTree(root));
+            }
+
+            Log.d(TAG, "All trees processed. Creating RandomForestClassifier");
+            classifier = new RandomForestClassifier(trees, aslClasses.size());
+            Log.i(TAG, "Random Forest Classifier initialized successfully");
+        } catch (Resources.NotFoundException e) {
+            Log.e(TAG, "forest_structure.json file not found in raw folder: " + e.getMessage());
+        } catch (IOException e) {
+            Log.e(TAG, "Error reading forest_structure.json: " + e.getMessage());
+        } catch (JSONException e) {
+            Log.e(TAG, "Error parsing JSON: " + e.getMessage());
+        } catch (Exception e) {
+            Log.e(TAG, "Error initializing Random Forest Classifier: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    private RandomForestClassifier.Node buildTreeFromJson(JSONArray treeArray) throws JSONException {
+        Map<Integer, RandomForestClassifier.Node> nodeMap = new HashMap<>();
+
+        for (int i = 0; i < treeArray.length(); i++) {
+            JSONObject nodeJson = treeArray.getJSONObject(i);
+            int nodeId = nodeJson.getInt("node_id");
+            boolean isLeaf = nodeJson.getBoolean("is_leaf");
+
+            if (isLeaf) {
+                int prediction = nodeJson.getInt("prediction");
+                nodeMap.put(nodeId, new RandomForestClassifier.Node(prediction));
+                Log.d(TAG, "Created leaf node " + nodeId + " with prediction " + prediction);
+            } else {
+                int featureIndex = nodeJson.getInt("feature_index");
+                float threshold = (float) nodeJson.getDouble("threshold");
+                int leftChild = nodeJson.getInt("left_child");
+                int rightChild = nodeJson.getInt("right_child");
+
+                // Create node without children first
+                RandomForestClassifier.Node node = new RandomForestClassifier.Node(featureIndex, threshold, null, null);
+                nodeMap.put(nodeId, node);
+                Log.d(TAG, "Created internal node " + nodeId + " with feature " + featureIndex + " and threshold " + threshold);
+            }
+        }
+
+        // Second pass to set children for internal nodes
+        for (int i = 0; i < treeArray.length(); i++) {
+            JSONObject nodeJson = treeArray.getJSONObject(i);
+            int nodeId = nodeJson.getInt("node_id");
+            boolean isLeaf = nodeJson.getBoolean("is_leaf");
+
+            if (!isLeaf) {
+                int leftChild = nodeJson.getInt("left_child");
+                int rightChild = nodeJson.getInt("right_child");
+
+                RandomForestClassifier.Node node = nodeMap.get(nodeId);
+                node.left = nodeMap.get(leftChild);
+                node.right = nodeMap.get(rightChild);
+
+                if (node.left == null || node.right == null) {
+                    Log.e(TAG, "Child node not found for node " + nodeId);
+                    throw new JSONException("Child node not found for node " + nodeId);
+                }
+                Log.d(TAG, "Set children for node " + nodeId + ": left = " + leftChild + ", right = " + rightChild);
+            }
+        }
+
+        RandomForestClassifier.Node root = nodeMap.get(0);
+        if (root == null) {
+            Log.e(TAG, "Root node (0) not found in the tree");
+            throw new JSONException("Root node not found");
+        }
+        Log.d(TAG, "Tree built successfully. Root node: " + root);
+        return root;
+    }
+
     private void initializeHandsAndCamera() {
-        // Initialize MediaPipe Hands
         HandsOptions handsOptions = HandsOptions.builder()
                 .setStaticImageMode(false)
                 .setMaxNumHands(1)
@@ -155,75 +263,31 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void processHandsResult(HandsResult result) {
-        runOnUiThread(() -> {
-            if (result.multiHandLandmarks().isEmpty()) {
-                textView.setText("No hands detected");
-            } else {
-                textView.setText("Hand detected");
-                String handPosition = getHandPosition(result);
-
-                runOnUiThread(() -> {
-                    textView.setText(handPosition);
-
-                    // Clear any previous drawings
-                    Bitmap outputBitmap = Bitmap.createBitmap(previewView.getWidth(), previewView.getHeight(), Bitmap.Config.ARGB_8888);
-                    Canvas canvas = new Canvas(outputBitmap);
-
-                    if (!result.multiHandLandmarks().isEmpty()) {
-                        // Draw bounding box
-                        RectF boundingBox = getBoundingBox(result.multiHandLandmarks().get(0).getLandmarkList());
-                        canvas.drawRect(boundingBox, boxPaint);
-                    }
-
-                    // Set the bitmap to an ImageView or draw it on a custom view
-                    // For simplicity, let's assume you have an ImageView with id 'overlayView' in your layout
-                    ImageView overlayView = findViewById(R.id.overlayView);
-                    overlayView.setImageBitmap(outputBitmap);
-                });
-            }
-        });
-    }
-
-    private RectF getBoundingBox(List<LandmarkProto.NormalizedLandmark> landmarks) {
-        float minX = Float.MAX_VALUE;
-        float minY = Float.MAX_VALUE;
-        float maxX = Float.MIN_VALUE;
-        float maxY = Float.MIN_VALUE;
-
-        for (LandmarkProto.NormalizedLandmark landmark : landmarks) {
-            minX = Math.min(minX, landmark.getX());
-            minY = Math.min(minY, landmark.getY());
-            maxX = Math.max(maxX, landmark.getX());
-            maxY = Math.max(maxY, landmark.getY());
+        if (classifier == null) {
+            Log.e(TAG, "Random Forest Classifier is not initialized");
+            runOnUiThread(() -> textView.setText("Classifier not initialized"));
+            return;
         }
 
-        // Convert normalized coordinates to pixel coordinates
-        int width = previewView.getWidth();
-        int height = previewView.getHeight();
-        return new RectF(minX * width, minY * height, maxX * width, maxY * height);
-    }
-
-
-    private String getHandPosition(HandsResult result) {
         if (result.multiHandLandmarks().isEmpty()) {
-            return "No hand detected";
+            runOnUiThread(() -> textView.setText("No hands detected"));
+            return;
         }
 
         List<LandmarkProto.NormalizedLandmark> landmarks = result.multiHandLandmarks().get(0).getLandmarkList();
 
-        // Calculate the center of the palm
-        float centerX = (landmarks.get(HandLandmark.WRIST).getX() +
-                landmarks.get(HandLandmark.MIDDLE_FINGER_MCP).getX()) / 2;
-        float centerY = (landmarks.get(HandLandmark.WRIST).getY() +
-                landmarks.get(HandLandmark.MIDDLE_FINGER_MCP).getY()) / 2;
+        float[] inputData = new float[21 * 2];  // 21 landmarks, X and Y coordinates
+        for (int i = 0; i < landmarks.size(); i++) {
+            LandmarkProto.NormalizedLandmark landmark = landmarks.get(i);
+            inputData[i * 2] = landmark.getX();
+            inputData[i * 2 + 1] = landmark.getY();
+        }
 
-        // Determine the position based on the center of the palm
-        String horizontalPosition = centerX < 0.33f ? "Left" : (centerX > 0.66f ? "Right" : "Center");
-        String verticalPosition = centerY < 0.33f ? "Top" : (centerY > 0.66f ? "Bottom" : "Middle");
+        int predictedClass = classifier.predict(inputData);
+        String prediction = aslClasses.get(predictedClass);
 
-        return verticalPosition + " " + horizontalPosition;
+        runOnUiThread(() -> textView.setText(prediction));
     }
-
 
     private Bitmap imageProxyToBitmap(ImageProxy image) {
         ImageProxy.PlaneProxy[] planes = image.getPlanes();
@@ -237,7 +301,6 @@ public class MainActivity extends AppCompatActivity {
 
         byte[] nv21 = new byte[ySize + uSize + vSize];
 
-        // U and V are swapped
         yBuffer.get(nv21, 0, ySize);
         vBuffer.get(nv21, ySize, vSize);
         uBuffer.get(nv21, ySize + vSize, uSize);
