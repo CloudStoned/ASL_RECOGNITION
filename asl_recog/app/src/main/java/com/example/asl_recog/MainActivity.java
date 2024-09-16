@@ -4,24 +4,16 @@ import android.annotation.SuppressLint;
 import android.content.pm.PackageManager;
 import android.os.Bundle;
 import android.util.Log;
-import android.util.Size;
 import android.widget.Button;
 import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
-import androidx.camera.core.Camera;
-import androidx.camera.core.CameraSelector;
-import androidx.camera.core.ImageAnalysis;
 import androidx.camera.core.ImageProxy;
-import androidx.camera.core.Preview;
-import androidx.camera.lifecycle.ProcessCameraProvider;
 import androidx.camera.view.PreviewView;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
-
-import com.google.common.util.concurrent.ListenableFuture;
 
 import org.pytorch.IValue;
 import org.pytorch.LiteModuleLoader;
@@ -37,22 +29,17 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Executor;
-import java.util.concurrent.Executors;
 
-public class MainActivity extends AppCompatActivity {
+public class MainActivity extends AppCompatActivity implements CameraManager.ImageAnalysisCallback {
     private static final String TAG = "TORCH_TORCH";
     private static final int REQUEST_CODE_PERMISSION = 101;
     private static final String[] REQUIRED_PERMISSION = new String[]{"android.permission.CAMERA"};
 
-    private ListenableFuture<ProcessCameraProvider> cameraProviderFuture;
     private PreviewView previewView;
-
     private TextView textView;
     private Module module;
     private List<String> classes;
-    private final Executor executor = Executors.newSingleThreadExecutor();
+    private CameraManager cameraManager;
 
     private TextView combinedLettersTextView;
     private Button combineLettersButton;
@@ -92,15 +79,8 @@ public class MainActivity extends AppCompatActivity {
     private void initializeApp() {
         classes = loadClasses("classes.txt");
         loadTorchModule("2_CLASSES_MODEL.ptl");
-        cameraProviderFuture = ProcessCameraProvider.getInstance(this);
-        cameraProviderFuture.addListener(() -> {
-            try {
-                ProcessCameraProvider cameraProvider = cameraProviderFuture.get();
-                startCamera(cameraProvider);
-            } catch (ExecutionException | InterruptedException e) {
-                Log.e(TAG, "Error starting camera", e);
-            }
-        }, ContextCompat.getMainExecutor(this));
+        cameraManager = new CameraManager(this, previewView, this);
+        cameraManager.startCamera();
     }
 
     @Override
@@ -114,23 +94,6 @@ public class MainActivity extends AppCompatActivity {
                 finish();
             }
         }
-    }
-
-    private void startCamera(@NonNull ProcessCameraProvider cameraProvider) {
-        Preview preview = new Preview.Builder().build();
-        CameraSelector cameraSelector = new CameraSelector.Builder()
-                .requireLensFacing(CameraSelector.LENS_FACING_BACK)
-                .build();
-        preview.setSurfaceProvider(previewView.getSurfaceProvider());
-
-        ImageAnalysis imageAnalysis = new ImageAnalysis.Builder()
-                .setTargetResolution(new Size(224, 224))
-                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                .build();
-
-        imageAnalysis.setAnalyzer(executor, this::analyzeImage);
-
-        Camera camera = cameraProvider.bindToLifecycle(this, cameraSelector, preview, imageAnalysis);
     }
 
     private void loadTorchModule(String fileName) {
@@ -154,7 +117,8 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    private void analyzeImage(@NonNull ImageProxy image) {
+    @Override
+    public void onImageAnalyzed(@NonNull ImageProxy image) {
         int rotation = image.getImageInfo().getRotationDegrees();
         try {
             int cropSize = 224;
@@ -168,7 +132,6 @@ public class MainActivity extends AppCompatActivity {
             );
 
             Tensor outputTensor = module.forward(IValue.from(inputTensor)).toTensor();
-
 
             float[] scores = outputTensor.getDataAsFloatArray();
 
@@ -186,7 +149,6 @@ public class MainActivity extends AppCompatActivity {
                 Log.d(TAG, "Detected - " + classResult);
                 runOnUiThread(() -> {
                     textView.setText(classResult);
-                    // Enable the combine letters button when a letter is detected
                     combineLettersButton.setEnabled(true);
                 });
             } else {
@@ -214,20 +176,16 @@ public class MainActivity extends AppCompatActivity {
         return classes;
     }
 
-    private void combineLetters()
-    {
+    private void combineLetters() {
         String currentLetter = textView.getText().toString();
-        if(!currentLetter.equals("Result Here"))
-        {
+        if(!currentLetter.equals("Result Here")) {
             combinedLetters.append(currentLetter);
             combinedLettersTextView.setText(combinedLetters.toString());
         }
     }
 
-    private void clearCombinedLetters()
-    {
+    private void clearCombinedLetters() {
         combinedLetters.setLength(0);
         combinedLettersTextView.setText("Combined Letters");
     }
-
 }
