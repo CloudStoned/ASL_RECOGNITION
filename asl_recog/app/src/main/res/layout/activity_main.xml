@@ -62,4 +62,13 @@
         app:layout_constraintVertical_bias="0.98"
         android:layout_marginBottom="20dp" />
 
+    <Button
+        android:id="@+id/collect_dataset_button"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Collect DS"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintLeft_toLeftOf="parent"
+        android:layout_marginBottom="20dp" />
+
 </androidx.constraintlayout.widget.ConstraintLayout>

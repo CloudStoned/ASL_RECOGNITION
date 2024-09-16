@@ -1,50 +1,42 @@
 package com.example.asl_recog;
 
-import android.annotation.SuppressLint;
 import android.content.pm.PackageManager;
 import android.os.Bundle;
-import android.util.Log;
+import android.view.View;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.annotation.NonNull;
+import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.camera.core.ImageProxy;
 import androidx.camera.view.PreviewView;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
-import org.pytorch.IValue;
-import org.pytorch.LiteModuleLoader;
-import org.pytorch.Module;
-import org.pytorch.Tensor;
-import org.pytorch.torchvision.TensorImageUtils;
-
-import java.io.BufferedReader;
-import java.io.File;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.util.ArrayList;
-import java.util.List;
-
-public class MainActivity extends AppCompatActivity implements CameraManager.ImageAnalysisCallback {
-    private static final String TAG = "TORCH_TORCH";
+public class MainActivity extends AppCompatActivity implements CameraManager.ImageAnalysisCallback, DataCollector.DataCollectionCallback {
+    private static final String TAG = "MainActivity";
     private static final int REQUEST_CODE_PERMISSION = 101;
-    private static final String[] REQUIRED_PERMISSION = new String[]{"android.permission.CAMERA"};
+    private static final String[] REQUIRED_PERMISSION = new String[]{
+            "android.permission.CAMERA",
+            "android.permission.WRITE_EXTERNAL_STORAGE"
+    };
 
     private PreviewView previewView;
     private TextView textView;
-    private Module module;
-    private List<String> classes;
     private CameraManager cameraManager;
+    private TorchManager torchManager;
+    private DataCollector dataCollector;
 
     private TextView combinedLettersTextView;
     private Button combineLettersButton;
     private Button clearButton;
+    private Button collectDatasetButton;
     private StringBuilder combinedLetters = new StringBuilder();
+
+    private boolean isCollectingData = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -56,9 +48,11 @@ public class MainActivity extends AppCompatActivity implements CameraManager.Ima
         combinedLettersTextView = findViewById(R.id.combined_letters);
         combineLettersButton = findViewById(R.id.combine_letters);
         clearButton = findViewById(R.id.clear_button);
+        collectDatasetButton = findViewById(R.id.collect_dataset_button);
 
         combineLettersButton.setOnClickListener(v -> combineLetters());
         clearButton.setOnClickListener(v -> clearCombinedLetters());
+        collectDatasetButton.setOnClickListener(v -> showDataCollectionDialog());
 
         if (checkPermissions()) {
             initializeApp();
@@ -76,13 +70,6 @@ public class MainActivity extends AppCompatActivity implements CameraManager.Ima
         return true;
     }
 
-    private void initializeApp() {
-        classes = loadClasses("classes.txt");
-        loadTorchModule("2_CLASSES_MODEL.ptl");
-        cameraManager = new CameraManager(this, previewView, this);
-        cameraManager.startCamera();
-    }
-
     @Override
     public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
@@ -96,84 +83,78 @@ public class MainActivity extends AppCompatActivity implements CameraManager.Ima
         }
     }
 
-    private void loadTorchModule(String fileName) {
-        File modelFile = new File(this.getFilesDir(), fileName);
-        try {
-            if (!modelFile.exists()) {
-                InputStream inputStream = getAssets().open(fileName);
-                FileOutputStream outputStream = new FileOutputStream(modelFile);
-                byte[] buffer = new byte[2048];
-                int bytesRead;
-                while ((bytesRead = inputStream.read(buffer)) != -1) {
-                    outputStream.write(buffer, 0, bytesRead);
-                }
-                inputStream.close();
-                outputStream.close();
-            }
-            module = LiteModuleLoader.load(modelFile.getAbsolutePath());
-            Log.d(TAG, "Model successfully loaded");
-        } catch (IOException e) {
-            Log.e(TAG, "Error loading model", e);
+
+    private void initializeApp() {
+        torchManager = new TorchManager(this, textView, combineLettersButton);
+        torchManager.loadClasses("classes.txt");
+        torchManager.loadModel("2_CLASSES_MODEL.ptl");
+        cameraManager = new CameraManager(this, previewView, this);
+        cameraManager.startCamera();
+        dataCollector = new DataCollector(this);
+        dataCollector.setCallback(this);
+    }
+
+    // DATA COLLECTION
+    private void showDataCollectionDialog() {
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        View dialogView = getLayoutInflater().inflate(R.layout.data_collection_dialog, null);
+        builder.setView(dialogView);
+
+        EditText classNameInput = dialogView.findViewById(R.id.class_name_input);
+        EditText datasetSizeInput = dialogView.findViewById(R.id.dataset_size_input);
+
+        builder.setPositiveButton("Start", (dialog, which) -> {
+            String className = classNameInput.getText().toString();
+            int datasetSize = Integer.parseInt(datasetSizeInput.getText().toString());
+            startDataCollection(className, datasetSize);
+        });
+
+        builder.setNegativeButton("Cancel", (dialog, which) -> dialog.cancel());
+
+        builder.show();
+    }
+
+    private void startDataCollection(String className, int datasetSize) {
+        isCollectingData = true;
+        dataCollector.startDataCollection(className, datasetSize);
+        updateUI();
+    }
+
+    private void updateUI() {
+        if (isCollectingData) {
+            textView.setText(String.format("Collecting: %d / %d",
+                    dataCollector.getCurrentImageCount(), dataCollector.getDatasetSize()));
+            collectDatasetButton.setEnabled(false);
+        } else {
+            collectDatasetButton.setEnabled(true);
         }
     }
 
     @Override
-    public void onImageAnalyzed(@NonNull ImageProxy image) {
-        int rotation = image.getImageInfo().getRotationDegrees();
-        try {
-            int cropSize = 224;
-            float[] mean = {0.485f, 0.456f, 0.406f};
-            float[] std = {0.229f, 0.224f, 0.225f};
-
-            @SuppressLint("UnsafeOptInUsageError")
-            Tensor inputTensor = TensorImageUtils.imageYUV420CenterCropToFloat32Tensor(
-                    image.getImage(), rotation, cropSize, cropSize,
-                    mean, std
-            );
-
-            Tensor outputTensor = module.forward(IValue.from(inputTensor)).toTensor();
-
-            float[] scores = outputTensor.getDataAsFloatArray();
-
-            int maxScoreIdx = 0;
-            float maxScore = scores[0];
-            for (int i = 1; i < scores.length; i++) {
-                if (scores[i] > maxScore) {
-                    maxScore = scores[i];
-                    maxScoreIdx = i;
-                }
-            }
-
-            if (maxScoreIdx >= 0 && maxScoreIdx < classes.size()) {
-                String classResult = classes.get(maxScoreIdx);
-                Log.d(TAG, "Detected - " + classResult);
-                runOnUiThread(() -> {
-                    textView.setText(classResult);
-                    combineLettersButton.setEnabled(true);
-                });
-            } else {
-                Log.e(TAG, "Index out of bounds for class labels");
-            }
-
-        } catch (Exception e) {
-            Log.e(TAG, "Error analyzing image", e);
-        } finally {
-            image.close();
-        }
+    public void onProgressUpdate(int progress, int total) {
+        runOnUiThread(() -> {
+            textView.setText(String.format("Collecting: %d / %d", progress, total));
+        });
     }
 
-    private List<String> loadClasses(String fileName) {
-        List<String> classes = new ArrayList<>();
-        try (BufferedReader br = new BufferedReader(new InputStreamReader(getAssets().open(fileName)))) {
-            String line;
-            while ((line = br.readLine()) != null) {
-                classes.add(line);
-            }
-            Log.d(TAG, "Number of classes loaded: " + classes.size());
-        } catch (IOException e) {
-            Log.e(TAG, "Error loading classes", e);
+    @Override
+    public void onCompleted() {
+        runOnUiThread(() -> {
+            isCollectingData = false;
+            updateUI();
+            Toast.makeText(this, "Data collection completed!", Toast.LENGTH_SHORT).show();
+        });
+    }
+
+
+    // PYTORCH
+    @Override
+    public void onImageAnalyzed(@NonNull ImageProxy image) {
+        if (isCollectingData) {
+            dataCollector.processImage(image);
+        } else {
+            torchManager.onImageAnalyzed(image);
         }
-        return classes;
     }
 
     private void combineLetters() {
@@ -188,4 +169,7 @@ public class MainActivity extends AppCompatActivity implements CameraManager.Ima
         combinedLetters.setLength(0);
         combinedLettersTextView.setText("Combined Letters");
     }
+
+
+
 }
