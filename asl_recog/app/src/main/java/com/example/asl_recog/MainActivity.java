@@ -161,6 +161,7 @@ public class MainActivity extends AppCompatActivity {
             } else {
                 textView.setText("Hand detected");
                 String handPosition = getHandPosition(result);
+                String landmarkInfo = getLandmarkInfo(result);
 
                 runOnUiThread(() -> {
                     textView.setText(handPosition);
@@ -173,6 +174,8 @@ public class MainActivity extends AppCompatActivity {
                         // Draw bounding box
                         RectF boundingBox = getBoundingBox(result.multiHandLandmarks().get(0).getLandmarkList());
                         canvas.drawRect(boundingBox, boxPaint);
+
+                        drawLandmarks(canvas, result.multiHandLandmarks().get(0).getLandmarkList());
                     }
 
                     // Set the bitmap to an ImageView or draw it on a custom view
@@ -180,8 +183,34 @@ public class MainActivity extends AppCompatActivity {
                     ImageView overlayView = findViewById(R.id.overlayView);
                     overlayView.setImageBitmap(outputBitmap);
                 });
+                Log.d(TAG, landmarkInfo);
             }
         });
+    }
+
+    private String getLandmarkInfo(HandsResult result) {
+        StringBuilder info = new StringBuilder("Hand Landmarks:\n");
+        List<LandmarkProto.NormalizedLandmark> landmarks = result.multiHandLandmarks().get(0).getLandmarkList();
+        for (int i = 0; i < landmarks.size(); i++) {
+            LandmarkProto.NormalizedLandmark landmark = landmarks.get(i);
+            info.append(String.format("Landmark %d: (%.2f, %.2f, %.2f)\n", i, landmark.getX(), landmark.getY(), landmark.getZ()));
+        }
+        return info.toString();
+    }
+
+    private void drawLandmarks(Canvas canvas, List<LandmarkProto.NormalizedLandmark> landmarks) {
+        Paint landmarkPaint = new Paint();
+        landmarkPaint.setColor(Color.GREEN);
+        landmarkPaint.setStyle(Paint.Style.FILL);
+
+        int width = previewView.getWidth();
+        int height = previewView.getHeight();
+
+        for (LandmarkProto.NormalizedLandmark landmark : landmarks) {
+            float x = landmark.getX() * width;
+            float y = landmark.getY() * height;
+            canvas.drawCircle(x, y, 8f, landmarkPaint);
+        }
     }
 
     private RectF getBoundingBox(List<LandmarkProto.NormalizedLandmark> landmarks) {
