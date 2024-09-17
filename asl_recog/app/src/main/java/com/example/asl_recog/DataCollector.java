@@ -91,7 +91,6 @@ public class DataCollector {
 
         byte[] nv21 = new byte[ySize + uSize + vSize];
 
-        // U and V are swapped
         yBuffer.get(nv21, 0, ySize);
         vBuffer.get(nv21, ySize, vSize);
         uBuffer.get(nv21, ySize + vSize, uSize);
@@ -105,8 +104,24 @@ public class DataCollector {
 
         // Rotate the bitmap to portrait orientation
         Matrix matrix = new Matrix();
-        matrix.postRotate(90); // Rotate 90 degrees
-        return Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, true);
+        matrix.postRotate(90);
+        bitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, true);
+
+        // Crop to 4:3 aspect ratio
+        int width = bitmap.getWidth();
+        int height = bitmap.getHeight();
+        int newHeight = (width * 4) / 3;
+
+        if (newHeight > height) {
+            int newWidth = (height * 3) / 4;
+            int x = (width - newWidth) / 2;
+            bitmap = Bitmap.createBitmap(bitmap, x, 0, newWidth, height);
+        } else {
+            int y = (height - newHeight) / 2;
+            bitmap = Bitmap.createBitmap(bitmap, 0, y, width, newHeight);
+        }
+
+        return bitmap;
     }
 
     private void saveImageToGallery(Bitmap bitmap) {
