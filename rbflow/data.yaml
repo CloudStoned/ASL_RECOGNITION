@@ -1,0 +1,12 @@
+train: ./DATASET/train
+val: ./DATASET/val
+
+nc: 11
+names: ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10']
+
+roboflow:
+  workspace: rbflow
+  project: asl_v
+  version: 1
+  license: Private
+  url: https://app.roboflow.com/rbflow/asl_v/1
