@@ -1,68 +1,154 @@
 package com.example.asl_recog;
 
-import android.content.pm.PackageManager;
-import android.os.Bundle;
-import android.view.View;
-import android.widget.Button;
-import android.widget.EditText;
-import android.widget.TextView;
-import android.widget.Toast;
 
-import androidx.annotation.NonNull;
-import androidx.appcompat.app.AlertDialog;
+import android.Manifest;
+import android.content.pm.PackageManager;
+import android.graphics.Bitmap;
+import android.os.Bundle;
+import android.util.Log;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.camera.core.AspectRatio;
+import androidx.camera.core.Camera;
+import androidx.camera.core.CameraSelector;
+import androidx.camera.core.ImageAnalysis;
 import androidx.camera.core.ImageProxy;
-import androidx.camera.view.PreviewView;
+import androidx.camera.core.Preview;
+import androidx.camera.lifecycle.ProcessCameraProvider;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
-public class MainActivity extends AppCompatActivity implements CameraManager.ImageAnalysisCallback, DataCollector.DataCollectionCallback {
+
+import com.example.asl_recog.databinding.ActivityMainBinding;
+import com.google.common.util.concurrent.ListenableFuture;
+
+import java.util.List;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
+public class MainActivity extends AppCompatActivity implements Detector.DetectorListener {
     private static final String TAG = "MainActivity";
-    private static final int REQUEST_CODE_PERMISSION = 101;
-    private static final String[] REQUIRED_PERMISSION = new String[]{
-            "android.permission.CAMERA",
-            "android.permission.WRITE_EXTERNAL_STORAGE"
-    };
+    private static final int REQUEST_CODE_PERMISSIONS = 10;
+    private static final String[] REQUIRED_PERMISSIONS = {Manifest.permission.CAMERA};
 
-    private PreviewView previewView;
-    private TextView textView;
-    private CameraManager cameraManager;
-    private TorchManager torchManager;
-    private DataCollector dataCollector;
-
-    private TextView combinedLettersTextView;
-    private Button combineLettersButton;
-    private Button clearButton;
-    private Button collectDatasetButton;
+    private ActivityMainBinding binding;
+    private Detector detector;
+    private ExecutorService cameraExecutor;
     private StringBuilder combinedLetters = new StringBuilder();
-
-    private boolean isCollectingData = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        setContentView(R.layout.activity_main);
+        binding = ActivityMainBinding.inflate(getLayoutInflater());
+        setContentView(binding.getRoot());
 
-        previewView = findViewById(R.id.cameraView);
-        textView = findViewById(R.id.result_text);
-        combinedLettersTextView = findViewById(R.id.combined_letters);
-        combineLettersButton = findViewById(R.id.combine_letters);
-        clearButton = findViewById(R.id.clear_button);
-        collectDatasetButton = findViewById(R.id.collect_dataset_button);
+        cameraExecutor = Executors.newSingleThreadExecutor();
 
-        combineLettersButton.setOnClickListener(v -> combineLetters());
-        clearButton.setOnClickListener(v -> clearCombinedLetters());
-        collectDatasetButton.setOnClickListener(v -> showDataCollectionDialog());
-
-        if (checkPermissions()) {
-            initializeApp();
+        if (allPermissionsGranted()) {
+            startCamera();
         } else {
-            ActivityCompat.requestPermissions(this, REQUIRED_PERMISSION, REQUEST_CODE_PERMISSION);
+            ActivityCompat.requestPermissions(this, REQUIRED_PERMISSIONS, REQUEST_CODE_PERMISSIONS);
+        }
+
+        initializeDetector();
+        setupButtons();
+    }
+
+    private void initializeDetector() {
+        cameraExecutor.execute(() -> {
+            detector = new Detector(getApplicationContext(), "best_float32.tflite", "classes.txt", this);
+        });
+    }
+
+    private void setupButtons() {
+        binding.combineLetters.setOnClickListener(v -> {
+            combinedLetters.append(binding.resultText.getText());
+            binding.combinedLetters.setText(combinedLetters.toString());
+        });
+
+        binding.clearButton.setOnClickListener(v -> {
+            combinedLetters.setLength(0);
+            binding.combinedLetters.setText("");
+            binding.resultText.setText("Result Here");
+        });
+
+        binding.collectDatasetButton.setOnClickListener(v -> {
+            // Implement dataset collection logic here
+            Log.d(TAG, "Dataset collection button clicked");
+        });
+    }
+
+    private void startCamera() {
+        ListenableFuture<ProcessCameraProvider> cameraProviderFuture = ProcessCameraProvider.getInstance(this);
+
+        cameraProviderFuture.addListener(() -> {
+            try {
+                ProcessCameraProvider cameraProvider = cameraProviderFuture.get();
+                bindCameraUseCases(cameraProvider);
+            } catch (ExecutionException | InterruptedException e) {
+                Log.e(TAG, "Error starting camera: " + e.getMessage());
+            }
+        }, ContextCompat.getMainExecutor(this));
+    }
+
+    private void bindCameraUseCases(ProcessCameraProvider cameraProvider) {
+        Preview preview = new Preview.Builder()
+                .setTargetAspectRatio(AspectRatio.RATIO_4_3)
+                .build();
+
+        CameraSelector cameraSelector = new CameraSelector.Builder()
+                .requireLensFacing(CameraSelector.LENS_FACING_BACK)
+                .build();
+
+        ImageAnalysis imageAnalysis = new ImageAnalysis.Builder()
+                .setTargetAspectRatio(AspectRatio.RATIO_4_3)
+                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                .build();
+
+        imageAnalysis.setAnalyzer(cameraExecutor, this::analyze);
+
+        preview.setSurfaceProvider(binding.cameraView.getSurfaceProvider());
+
+        Camera camera = cameraProvider.bindToLifecycle(this, cameraSelector, preview, imageAnalysis);
+    }
+
+    private void analyze(ImageProxy image) {
+        if (detector == null) return;
+
+        int rotationDegrees = image.getImageInfo().getRotationDegrees();
+        Bitmap bitmap = imageToBitmap(image);
+        bitmap = rotateBitmap(bitmap, rotationDegrees);
+
+        detector.detect(bitmap);
+
+        image.close();
+    }
+
+    private Bitmap imageToBitmap(ImageProxy image) {
+        // Implementation of imageToBitmap method (as in the previous example)
+        // ...
+    }
+
+    private Bitmap rotateBitmap(Bitmap bitmap, int rotationDegrees) {
+        // Implementation of rotateBitmap method (as in the previous example)
+        // ...
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQUEST_CODE_PERMISSIONS) {
+            if (allPermissionsGranted()) {
+                startCamera();
+            } else {
+                Log.d(TAG, "Permissions not granted by the user.");
+                finish();
+            }
         }
     }
 
-    private boolean checkPermissions() {
-        for (String permission : REQUIRED_PERMISSION) {
+    private boolean allPermissionsGranted() {
+        for (String permission : REQUIRED_PERMISSIONS) {
             if (ContextCompat.checkSelfPermission(this, permission) != PackageManager.PERMISSION_GRANTED) {
                 return false;
             }
@@ -71,105 +157,30 @@ public class MainActivity extends AppCompatActivity implements CameraManager.Ima
     }
 
     @Override
-    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (requestCode == REQUEST_CODE_PERMISSION) {
-            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                initializeApp();
-            } else {
-                Toast.makeText(this, "Camera permission is required", Toast.LENGTH_SHORT).show();
-                finish();
+    public void onEmptyDetect() {
+        runOnUiThread(() -> {
+            binding.resultText.setText("No detection");
+        });
+    }
+
+    @Override
+    public void onDetect(List<BoundingBox> boundingBoxes, long inferenceTime) {
+        runOnUiThread(() -> {
+            if (!boundingBoxes.isEmpty()) {
+                // Assuming we're interested in the first detected object
+                BoundingBox firstBox = boundingBoxes.get(0);
+                binding.resultText.setText(firstBox.getClsName());
             }
-        }
-    }
-
-
-    private void initializeApp() {
-        torchManager = new TorchManager(this, textView, combineLettersButton);
-        torchManager.loadClasses("classes.txt");
-        torchManager.loadModel("2_CLASSES_MODEL.ptl");
-        cameraManager = new CameraManager(this, previewView, this);
-        cameraManager.startCamera();
-        dataCollector = new DataCollector(this);
-        dataCollector.setCallback(this);
-    }
-
-    // DATA COLLECTION
-    private void showDataCollectionDialog() {
-        AlertDialog.Builder builder = new AlertDialog.Builder(this);
-        View dialogView = getLayoutInflater().inflate(R.layout.data_collection_dialog, null);
-        builder.setView(dialogView);
-
-        EditText classNameInput = dialogView.findViewById(R.id.class_name_input);
-        EditText datasetSizeInput = dialogView.findViewById(R.id.dataset_size_input);
-
-        builder.setPositiveButton("Start", (dialog, which) -> {
-            String className = classNameInput.getText().toString();
-            int datasetSize = Integer.parseInt(datasetSizeInput.getText().toString());
-            startDataCollection(className, datasetSize);
-        });
-
-        builder.setNegativeButton("Cancel", (dialog, which) -> dialog.cancel());
-
-        builder.show();
-    }
-
-    private void startDataCollection(String className, int datasetSize) {
-        isCollectingData = true;
-        dataCollector.startDataCollection(className, datasetSize);
-        updateUI();
-    }
-
-    private void updateUI() {
-        if (isCollectingData) {
-            textView.setText(String.format("Collecting: %d / %d",
-                    dataCollector.getCurrentImageCount(), dataCollector.getDatasetSize()));
-            collectDatasetButton.setEnabled(false);
-        } else {
-            collectDatasetButton.setEnabled(true);
-        }
-    }
-
-    @Override
-    public void onProgressUpdate(int progress, int total) {
-        runOnUiThread(() -> {
-            textView.setText(String.format("Collecting: %d / %d", progress, total));
         });
     }
 
     @Override
-    public void onCompleted() {
-        runOnUiThread(() -> {
-            isCollectingData = false;
-            updateUI();
-            Toast.makeText(this, "Data collection completed!", Toast.LENGTH_SHORT).show();
-        });
-    }
-
-
-    // PYTORCH
-    @Override
-    public void onImageAnalyzed(@NonNull ImageProxy image) {
-        if (isCollectingData) {
-            dataCollector.processImage(image);
-        } else {
-            torchManager.onImageAnalyzed(image);
+    protected void onDestroy() {
+        super.onDestroy();
+        cameraExecutor.shutdown();
+        if (detector != null) {
+            detector.close();
         }
     }
-
-    private void combineLetters() {
-        String currentLetter = textView.getText().toString();
-        if(!currentLetter.equals("Result Here")) {
-            combinedLetters.append(currentLetter);
-            combinedLettersTextView.setText(combinedLetters.toString());
-        }
-    }
-
-    private void clearCombinedLetters() {
-        combinedLetters.setLength(0);
-        combinedLettersTextView.setText("Combined Letters");
-    }
-
-
 
 }
