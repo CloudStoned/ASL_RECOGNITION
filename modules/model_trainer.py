@@ -4,7 +4,8 @@ import copy
 from tqdm.auto import tqdm
 
 class ModelTrainer:
-    EARLY_STOPPING_PATIENCE = 10
+    EARLY_STOPPING_PATIENCE = 7  # Reduced from 10
+    IMPROVEMENT_THRESHOLD = 0.001  # 0.1% improvement threshold
 
     def __init__(self, device=None):
         if device is None:
@@ -97,7 +98,7 @@ class ModelTrainer:
             if test_acc > best_test_accuracy:
                 best_test_accuracy = test_acc
             
-            if test_loss < best_loss:
+            if test_loss < best_loss * (1 - self.IMPROVEMENT_THRESHOLD):
                 best_loss = test_loss
                 best_model_wts = copy.deepcopy(model.state_dict())
                 early_stopping_counter = 0
@@ -107,6 +108,7 @@ class ModelTrainer:
                 if early_stopping_counter >= patience:
                     print('Early stopping triggered.')
                     break
+
         
         model.load_state_dict(best_model_wts)
         time_elapsed = time.time() - start_time
@@ -115,7 +117,6 @@ class ModelTrainer:
     
 
 class TensorHandLandmarkTrainer:
-    EARLY_STOPPING_PATIENCE = 10
 
     def __init__(self, device=None):
         if device is None:
@@ -207,7 +208,8 @@ class TensorHandLandmarkTrainer:
             if test_acc > best_test_accuracy:
                 best_test_accuracy = test_acc
             
-            if test_loss < best_loss:
+            improvement_threshold = 0.001  # 0.1% improvement
+            if test_loss < best_loss * (1 - improvement_threshold):
                 best_loss = test_loss
                 best_model_wts = copy.deepcopy(model.state_dict())
                 early_stopping_counter = 0
