@@ -4,6 +4,7 @@ package com.example.asl_recog;
 import android.Manifest;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
+import android.graphics.Matrix;
 import android.os.Bundle;
 import android.util.Log;
 import androidx.appcompat.app.AppCompatActivity;
@@ -25,6 +26,13 @@ import java.util.List;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+
+import android.graphics.BitmapFactory;
+import android.graphics.ImageFormat;
+import android.graphics.Rect;
+import android.graphics.YuvImage;
+import java.io.ByteArrayOutputStream;
+import java.nio.ByteBuffer;
 
 public class MainActivity extends AppCompatActivity implements Detector.DetectorListener {
     private static final String TAG = "MainActivity";
@@ -116,7 +124,7 @@ public class MainActivity extends AppCompatActivity implements Detector.Detector
         if (detector == null) return;
 
         int rotationDegrees = image.getImageInfo().getRotationDegrees();
-        Bitmap bitmap = imageToBitmap(image);
+        Bitmap bitmap = imageProxyToBitmap(image);
         bitmap = rotateBitmap(bitmap, rotationDegrees);
 
         detector.detect(bitmap);
@@ -124,14 +132,30 @@ public class MainActivity extends AppCompatActivity implements Detector.Detector
         image.close();
     }
 
-    private Bitmap imageToBitmap(ImageProxy image) {
-        // Implementation of imageToBitmap method (as in the previous example)
-        // ...
+    private Bitmap imageProxyToBitmap(ImageProxy image) {
+        ImageProxy.PlaneProxy[] planes = image.getPlanes();
+        ByteBuffer yBuffer = planes[0].getBuffer();
+        ByteBuffer uBuffer = planes[1].getBuffer();
+        ByteBuffer vBuffer = planes[2].getBuffer();
+        int ySize = yBuffer.remaining();
+        int uSize = uBuffer.remaining();
+        int vSize = vBuffer.remaining();
+        byte[] nv21 = new byte[ySize + uSize + vSize];
+        // U and V are swapped
+        yBuffer.get(nv21, 0, ySize);
+        vBuffer.get(nv21, ySize, vSize);
+        uBuffer.get(nv21, ySize + vSize, uSize);
+        YuvImage yuvImage = new YuvImage(nv21, ImageFormat.NV21, image.getWidth(), image.getHeight(), null);
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        yuvImage.compressToJpeg(new Rect(0, 0, yuvImage.getWidth(), yuvImage.getHeight()), 100, out);
+        byte[] imageBytes = out.toByteArray();
+        return BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.length);
     }
 
     private Bitmap rotateBitmap(Bitmap bitmap, int rotationDegrees) {
-        // Implementation of rotateBitmap method (as in the previous example)
-        // ...
+        Matrix matrix = new Matrix();
+        matrix.postRotate(rotationDegrees);
+        return Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, true);
     }
 
     @Override
